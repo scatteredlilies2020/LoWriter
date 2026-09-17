@@ -19,9 +19,10 @@ vault*.json
 *.p12
 backups/
 exports/
-# Local notes and documentation are not published.
+# Only the neutral README and compact tracker are published; detailed notes stay local.
 /*.md
 /*.txt
 !/README.md
+!/TRACKER.md
 /docs/
 /.local/
