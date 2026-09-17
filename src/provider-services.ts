@@ -1,8 +1,9 @@
-import { AppError, requireString } from './shared.ts';
+import { AppError, requireString, isSpeech } from './shared.ts';
 import type { Connection } from './shared.ts';
 import { preset } from './provider-catalog.ts';
 import { boundedBody, requestHeaders } from './provider-native.ts';
 import { routedFetch } from './transport.ts';
+import { imageBytes } from './media.ts';
 
 async function getJson(c: Connection, key: string, url: string, signal: AbortSignal, transport: typeof fetch): Promise<any> {
   const response = await transport(url, { redirect: 'error', signal: AbortSignal.any([signal, AbortSignal.timeout(20000)]), headers: { ...requestHeaders(c, key), Accept: 'application/json' } });
@@ -14,7 +15,7 @@ export async function listModels(c: Connection, key: string, signal: AbortSignal
   const p = preset(c.provider || 'custom');
   if (p.discovery === false) return { models: (p.models || []).map(id => ({ id, name: id })), source: 'documentation', partial: false, note: 'Documentation suggestions only. Enter an exact model ID from your account; this service has no integrated model-list endpoint.' };
   // Aggregators return a compatible catalog even when a selected model uses native generation.
-  const google = c.dialect === 'gemini' && c.provider !== 'opencode';
+  const google = ['gemini', 'gemini-images'].includes(c.dialect) && c.provider !== 'opencode';
   const anthropic = c.dialect === 'anthropic' && !['opencode', 'aws-mantle'].includes(c.provider || '');
   const endpoint = c.provider === 'aws-mantle' ? c.endpoint.replace('/anthropic/v1', '/v1') : c.endpoint;
   const catalogConnection = ['opencode', 'aws-mantle'].includes(c.provider || '') ? { ...c, dialect: 'chat-completions' as const } : c;
@@ -27,6 +28,7 @@ export async function listModels(c: Connection, key: string, signal: AbortSignal
   return { models, source: 'provider', partial: !!data.nextPageToken || !!data.has_more || raw.length > 2000, note: 'Catalog only—not proof of billing, account access, or tool support. You can always enter a model ID manually.' };
 }
 export async function listVoices(c: Connection, key: string, signal: AbortSignal, transport: typeof fetch = routedFetch(c)) {
+  if (c.dialect === 'speech-openai') return { voices: (['tts-1', 'tts-1-hd'].includes(c.model) ? ['alloy','ash','coral','echo','fable','onyx','nova','sage','shimmer'] : ['alloy','ash','ballad','coral','echo','fable','nova','onyx','sage','shimmer','verse','marin','cedar']).map(id => ({ id, name: id })), partial: false, source: 'documentation' };
   if (c.dialect !== 'speech') throw new AppError('Choose a speech connection.');
   // Official catalog is v2; legacy /voices remains available to custom v1-compatible proxies.
   const data = await getJson(c, key, c.provider === 'elevenlabs' ? c.endpoint.replace(/\/v1$/, '/v2') + '/voices?page_size=100' : c.endpoint + '/voices', signal, transport);
@@ -34,12 +36,31 @@ export async function listVoices(c: Connection, key: string, signal: AbortSignal
   return { voices: data.voices.slice(0, 1000).filter((v: any) => safeId(v?.voice_id)).map((v: any) => ({ id: v.voice_id, name: typeof v.name === 'string' ? v.name.slice(0, 200) : v.voice_id })), partial: data.voices.length > 1000 || !!data.has_more };
 }
 export async function speak(c: Connection, key: string, input: any, signal: AbortSignal, transport: typeof fetch = routedFetch(c)): Promise<Uint8Array> {
-  if (c.dialect !== 'speech') throw new AppError('Choose a speech connection.');
+  if (!isSpeech(c.dialect)) throw new AppError('Choose a speech connection.');
   const voice = requireString(input.voice, 'voice ID', 200), text = requireString(input.text, 'speech text', 5000);
   if (!/^[a-zA-Z0-9_-]+$/.test(voice)) throw new AppError('Invalid voice ID.');
-  const response = await transport(`${c.endpoint}/text-to-speech/${encodeURIComponent(voice)}?output_format=mp3_44100_128`, { method: 'POST', redirect: 'error', signal: AbortSignal.any([signal, AbortSignal.timeout(120000)]), headers: { ...requestHeaders(c, key), Accept: 'audio/mpeg' }, body: JSON.stringify({ text, model_id: c.model }) });
+  const speed = input.speed ?? 1;
+  if (typeof speed !== 'number' || !Number.isFinite(speed) || speed < 0.7 || speed > 1.2) throw new AppError('Speech speed must be between 0.7 and 1.2.');
+  const openai = c.dialect === 'speech-openai';
+  const response = await transport(openai ? `${c.endpoint}/audio/speech` : `${c.endpoint}/text-to-speech/${encodeURIComponent(voice)}?output_format=mp3_44100_128`, { method: 'POST', redirect: 'error', signal: AbortSignal.any([signal, AbortSignal.timeout(120000)]), headers: { ...requestHeaders(c, key), Accept: 'audio/mpeg' }, body: JSON.stringify(openai ? { input: text, model: c.model, voice, speed, response_format: 'mp3' } : { text, model_id: c.model, voice_settings: { speed } }) });
   if (response.ok && !response.headers.get('content-type')?.includes('audio/mpeg')) { await response.body?.cancel(); throw new AppError('Provider did not return MP3 audio.', 502); }
   const audio = await boundedBody(response, 8000000);
   if (!audio.length) throw new AppError('Provider returned empty audio.', 502);
   return audio;
+}
+
+export async function generateImage(c: Connection, key: string, input: any, signal: AbortSignal, transport: typeof fetch = routedFetch(c)) {
+  const prompt = requireString(input.prompt, 'image prompt', 8000);
+  if (!['images', 'gemini-images'].includes(c.dialect)) throw new AppError('Choose an image connection.');
+  const gemini = c.dialect === 'gemini-images';
+  const size = input.size || '1024x1024';
+  if (!['1024x1024', '1536x1024', '1024x1536'].includes(size)) throw new AppError('Unsupported image size.');
+  const payload = gemini ? { contents: [{ role: 'user', parts: [{ text: prompt }] }], generationConfig: { responseModalities: ['TEXT', 'IMAGE'] } }
+    : { model: c.model, prompt, n: 1, size, ...(/^gpt-image-/i.test(c.model) ? {} : { response_format: 'b64_json' }) };
+  const response = await transport(gemini ? `${c.endpoint}/models/${encodeURIComponent(c.model.replace(/^models\//, ''))}:generateContent` : `${c.endpoint}/images/generations`, { method: 'POST', redirect: 'error', signal: AbortSignal.any([signal, AbortSignal.timeout(180000)]), headers: { ...requestHeaders(c, key), Accept: 'application/json' }, body: JSON.stringify(payload) });
+  const bytes = await boundedBody(response, 12000000);
+  let data: any; try { data = JSON.parse(new TextDecoder().decode(bytes)); } catch { throw new AppError('Invalid image response JSON; raw data withheld.', 502); }
+  if (gemini && data.candidates?.[0]?.finishReason !== 'STOP') throw new AppError('Image provider did not finish normally.', 502);
+  const base64 = gemini ? data.candidates?.[0]?.content?.parts?.find((p: any) => p.inlineData)?.inlineData?.data : data.data?.[0]?.b64_json;
+  return imageBytes(base64);
 }

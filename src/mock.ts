@@ -8,7 +8,8 @@ export async function startMock(port = 0) {
     let raw = '';
     for await (const part of req) { raw += part; if (raw.length > 250000) { res.writeHead(413).end(); return; } }
     let body: any; try { body = JSON.parse(raw); } catch { res.writeHead(400).end(); return; }
-    const lastUser = body.messages?.findLast((m: any) => m.role === 'user')?.content ?? '';
+    const content = body.messages?.findLast((m: any) => m.role === 'user')?.content ?? '';
+    const lastUser = typeof content === 'string' ? content : content.filter((p: any) => p.type === 'text').map((p: any) => p.text).join('\n');
     if (lastUser.includes('[http-error]')) { res.writeHead(401).end('Secret error body must not be reflected.'); return; }
     res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' });
     const event = (delta: any, finish: string | null = null) => res.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`);
@@ -31,7 +32,7 @@ export async function startMock(port = 0) {
     const codingSuccess = toolResults.length === 4 && (() => { try { return JSON.parse(toolResults[3].content).exitCode === 0; } catch { return false; } })();
     const text = lastUser.includes('[slow]') ? 'This deliberately slow demo can be stopped without committing its partial reply. '.repeat(10)
       : toolResults.length ? codingSuccess ? 'Demo complete: inspected the project, read greeting.js, saved a checkpoint and diff, changed the greeting, and passed node --check. This proves syntax only, not runtime behavior.' : 'The demo coding task encountered a tool failure. Review the action output; I cannot claim the change or test passed.'
-      : `This is a local demo, not a live AI model.\n\n${lastUser.toLowerCase().includes('story') ? 'The last train had left an hour ago, but a warm light still glowed in the station window. On the bench lay a letter addressed to you.\n\nWhat would you like to happen next?' : 'Your message is saved here, and this reply is arriving as a real SSE stream. Open Connections to configure a compatible provider, or switch to Coding to try a controlled project task.'}`;
+      : `This is a local demo, not a live AI model.\n\n${lastUser.toLowerCase().includes('story') ? 'The last train had left an hour ago, but a warm light still glowed in the station window. On the bench lay a letter addressed to you.\n\nWhat would you like to happen next?' : 'Your message is saved here, and this reply is arriving as a real SSE stream. Open Connections to configure a compatible provider, or switch to Assistant to try a controlled project task.'}`;
     for (const part of text.match(/.{1,12}|\n/g) ?? []) {
       if (res.destroyed) return;
       event({ content: part });

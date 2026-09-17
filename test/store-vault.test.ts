@@ -56,6 +56,8 @@ test('history stays paged at 40/80 even with 10,000 records', async t => {
   store.transaction(() => { const insert = store.db.prepare('INSERT INTO messages(conversation,role,content,revision) VALUES(?,?,?,?)'); for (let n = 0; n < 10000; n++) insert.run(c.id, 'user', `Message ${n}`, n); });
   const page = store.messages(c.id); assert.equal(page.length, 40); assert.equal(page.at(-1)?.content, 'Message 9999');
   assert.equal(store.messages(c.id, page[0].id).at(-1)?.content, 'Message 9959'); assert.equal(store.messages(c.id, Number.MAX_SAFE_INTEGER, 10000).length, 80);
+  assert.equal(store.contextMessages(c.id, Number.MAX_SAFE_INTEGER, 10000).length, 400);
+  assert.equal(store.contextMessages(c.id, Number.MAX_SAFE_INTEGER, 120).length, 120);
 });
 test('RP cannot inherit project authority', async t => {
   const store = new Store(join(await temp(t), 'test.sqlite')); t.after(() => store.close()); const c = store.create('rp', 'RP'); assert.throws(() => store.project(c.id, '/tmp', true), /RP/);

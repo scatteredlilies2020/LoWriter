@@ -1,5 +1,5 @@
 import { createElement, type ComponentChildren } from 'preact';
-import { useMemo, useRef, useState } from 'preact/hooks';
+import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { Lexer, type Token, type Tokens } from 'marked';
 import './message-content.css';
 
@@ -48,11 +48,13 @@ function renderTokens(tokens: Token[], depth = 0): ComponentChildren {
     }
   });
 }
-export function MessageContent({ text, revision = 0, editable = false, edited, onSave }: { text: string; revision?: number; editable?: boolean; edited?: string | null; onSave?: (text: string, revision: number) => Promise<void> }) {
+export function MessageContent({ text, revision = 0, editable = false, edited, onSave, onEditingChange }: { text: string; revision?: number; editable?: boolean; edited?: string | null; onEditingChange?: (editing: boolean) => void; onSave?: (text: string, revision: number) => Promise<void> }) {
   const [raw, setRaw] = useState(false);
   const [editing, setEditing] = useState(false), [draft, setDraft] = useState(''), [baseRevision, setBaseRevision] = useState(0);
   const [saving, setSaving] = useState(false), [error, setError] = useState('');
   const input = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => { onEditingChange?.(editing); }, [editing]);
+  useEffect(() => () => onEditingChange?.(false), []);
   function format(before: string, after = before) {
     const field = input.current; if (!field) return;
     const start = field.selectionStart, end = field.selectionEnd;

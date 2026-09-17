@@ -1,0 +1,21 @@
+.message-media { margin: 12px 0 4px 48px; font: 13px/1.5 system-ui,sans-serif; }
+.message-controls,.story-image figcaption,.read-aloud { display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
+.message-media button { padding:6px 10px; }
+.message-media a { color:var(--accent); text-underline-offset:3px; }
+.illustration-form,.story-image,.saved-audio { margin:12px 0; padding:14px; border:1px solid var(--border); border-radius:12px; }
+.message-media label { display:flex; flex-direction:column; gap:5px; margin:10px 0; }
+.message-media label.check-label { flex-direction:row; align-items:flex-start; }
+.message-media textarea,.message-media select { width:100%; max-width:100%; }
+.message-media textarea { background:var(--card); color:var(--text); border:1px solid var(--border); border-radius:8px; padding:10px; resize:vertical; }
+.message-media .hint { font-size:12px; }
+.story-image img { display:block; max-width:100%; max-height:480px; margin:auto; border-radius:8px; object-fit:contain; }
+.image-swipe { touch-action:pan-y; }
+.image-swipe:focus-visible { outline:2px solid var(--accent); outline-offset:4px; }
+.story-image figcaption { margin-top:10px; }
+.media-prompt { white-space:pre-wrap; overflow-wrap:anywhere; }
+.read-aloud label { min-width:160px; flex:1; }
+.saved-audio audio { display:block; width:100%; margin:10px 0; }
+.voice-presets { display:flex; flex-wrap:wrap; gap:8px; }
+.voice-presets small { display:block; }
+@media(max-width:640px) { .message-media { margin-left:0; } .story-image img { max-height:340px; } }
+@media(max-width:540px) { .topbar { height:auto; min-height:70px; flex-wrap:wrap; padding:8px 12px; } .top-actions { width:100%; justify-content:flex-end; } }

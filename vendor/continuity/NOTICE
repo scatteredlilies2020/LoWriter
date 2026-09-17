@@ -1,0 +1,6 @@
+Continuity Memory standalone core subset, version 0.15.0-testing.25.
+Source: https://github.com/scatteredlilies2020/Continuity-Memory
+Source revision: 852a3251d5c44944f607bca0d3c6afda6334dc5a
+The 23 JavaScript modules in this directory are unmodified upstream files.
+They are licensed under AGPL-3.0-only; see LICENSE in this directory.
+LoWriter supplies its own host/storage/provider integration outside this directory.

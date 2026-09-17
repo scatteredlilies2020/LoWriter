@@ -31,8 +31,8 @@ const anthropic = (blocks: any[], finish = 'end_turn') => [
   { type: 'message_delta', delta: { stop_reason: finish } }, { type: 'message_stop' },
 ];
 
-test('all 16 requested provider presets resolve automatically; regional plans and dynamic protocols', () => {
-  assert.equal(providers.filter(p => p.id !== 'custom').length, 16);
+test('all 19 provider presets resolve automatically; regional plans and dynamic protocols', () => {
+  assert.equal(providers.filter(p => p.id !== 'custom').length, 19);
   for (const p of providers.filter(p => p.id !== 'custom')) {
     const c = validateConnection({ provider: p.id, model: 'fixture-model', endpoint: 'https://malicious.invalid', auth: 'none' });
     assert.ok(c.endpoint.startsWith('https://')); assert.ok(!c.endpoint.includes('malicious')); assert.equal(c.auth, 'auto'); assert.equal(c.route, 'auto');
@@ -45,8 +45,8 @@ test('all 16 requested provider presets resolve automatically; regional plans an
   assert.throws(() => resolvePreset('aws-claude', '', 'malicious.invalid'));
   assert.throws(() => resolvePreset('dashscope', 'unknown'));
 });
-test('each of five API categories accepts custom proxies and explicit authentication', () => {
-  for (const dialect of ['chat-completions', 'responses', 'anthropic', 'gemini', 'speech']) {
+test('each of eight API categories accepts custom proxies and explicit authentication', () => {
+  for (const dialect of ['chat-completions', 'responses', 'anthropic', 'gemini', 'speech', 'speech-openai', 'images', 'gemini-images']) {
     const c = validateConnection({ ...custom(dialect), auth: 'bearer', name: 'My proxy' });
     assert.equal(c.dialect, dialect); assert.equal(c.endpoint, 'https://fixture.invalid/v1');
     assert.equal(requestHeaders(c, 'synthetic-key').Authorization, 'Bearer synthetic-key');
@@ -128,7 +128,7 @@ test('catalogs use native paths/auth, filter usable types, identify partial cata
 test('speech sends only explicit bounded text/model/voice and rejects wrong content or oversized input', async () => {
   const c = custom('speech'), f = transport('synthetic-mp3-bytes', 'audio/mpeg');
   assert.equal(new TextDecoder().decode(await speak(c, 'synthetic-key', { voice: 'voice1', text: 'fixture text' }, sig(), f.fetcher)), 'synthetic-mp3-bytes');
-  assert.deepEqual(f.calls[0].body, { text: 'fixture text', model_id: 'test-model' }); assert.match(f.calls[0].url, /text-to-speech\/voice1\?output_format=mp3_44100_128$/);
+  assert.deepEqual(f.calls[0].body, { text: 'fixture text', model_id: 'test-model', voice_settings: { speed: 1 } }); assert.match(f.calls[0].url, /text-to-speech\/voice1\?output_format=mp3_44100_128$/);
   await assert.rejects(speak(c, '', { voice: '../bad', text: 'text' }, sig(), f.fetcher));
   await assert.rejects(speak(c, '', { voice: 'v', text: 'x'.repeat(5001) }, sig(), f.fetcher)); assert.equal(f.calls.length, 1);
   const bad = transport('not-audio'); await assert.rejects(speak(c, '', { voice: 'v', text: 'text' }, sig(), bad.fetcher), /MP3/);
@@ -194,7 +194,7 @@ test('catalog API requires vault access, redacts typed key echoes, and speech re
   const input = { endpoint: `http://127.0.0.1:${(server.address() as { port: number }).port}/v1`, provider: 'custom', apiKey: 'synthetic-catalog-key', keyMode: 'keep' };
   assert.equal((await request('/models', input)).status, 423); assert.equal(hits, 0);
   await app.vault.unlock('synthetic fixture passphrase');
-  const result = await request('/models', input); assert.equal(result.status, 200); assert.equal(hits, 1); assert.ok(!JSON.stringify(result.data).includes(input.apiKey));
+  const result = await request('/models', input); assert.equal(result.status, 200, JSON.stringify({ error: result.data.error, fixtureHits: hits })); assert.equal(hits, 1); assert.ok(!JSON.stringify(result.data).includes(input.apiKey));
   assert.equal((await request('/speech', { ...input, dialect: 'speech', text: 'fixture', voice: 'voice1' })).status, 400); assert.equal(hits, 1);
   const profile = await saveConnection(app.store, app.vault, { ...input, model: 'fixture', apiKey: 'short', auth: 'bearer' });
   assert.equal(app.vault.get(profile.credentialId!), 'short');

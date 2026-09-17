@@ -8,9 +8,9 @@ const [command = 'help', ...args] = process.argv.slice(2);
 if (command === 'help') {
   console.log(`LoWriter CLI — uses the same coordinator as the GUI; never opens a browser.
   list                         List the newest 100 conversations
-  new coding|rp [title]        Create a conversation
+  new assistant|rp [title]     Create a conversation (coding is a legacy alias)
   show ID                     Show the latest 40 persisted messages and job status
-  chat ID                     Interactive coding/chat session; /exit to leave
+  chat ID                     Interactive assistant/chat session; /exit to leave
   send ID MESSAGE             Stream one reply (Ctrl+C cancels the job)
   project ID ABSOLUTE_PATH     Select a local folder WITHOUT granting trust
   trust ID                    Explicitly grant local project-file tools
@@ -50,8 +50,8 @@ Connection configuration and one-time legacy credential migration use the local 
       return cancelled;
     };
     if (command === 'pair') console.log(`Enter this local pairing code in LoWriter (changes on restart):\n${client.token}`);
-    else if (command === 'list') { const state = await api('/state'); for (const c of state.conversations as Conversation[]) console.log(`${c.id}  [${c.mode}] ${c.title}`); }
-    else if (command === 'new') { const c = await api('/conversations', { mode: args[0] ?? 'coding', title: args.slice(1).join(' ') || 'New coding task' }); console.log(c.id); }
+    else if (command === 'list') { const state = await api('/state'); for (const c of state.conversations as Conversation[]) console.log(`${c.id}  [${c.mode === 'coding' ? 'assistant' : c.mode}] ${c.title}`); }
+    else if (command === 'new') { const c = await api('/conversations', { mode: !args[0] || args[0] === 'assistant' ? 'coding' : args[0], title: args.slice(1).join(' ') || (args[0] === 'rp' ? 'Untitled story' : 'Untitled chat') }); console.log(c.id); }
     else if (command === 'show') { const d = await api('/conversations/' + args[0]); for (const m of d.messages) console.log(`${m.role}: ${m.content}\n`); if (d.job) console.log(`[${d.job.status}] ${d.job.error}`); }
     else if (command === 'send') await send(args[0], args.slice(1).join(' '));
     else if (command === 'chat') {

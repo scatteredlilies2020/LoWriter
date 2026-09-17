@@ -1,16 +1,17 @@
-import { AppError } from './shared.ts';
+import { AppError, isImage, isSpeech } from './shared.ts';
 import type { Connection, ProviderMessage, ToolCall } from './shared.ts';
 import { toolDefinitions } from './project-tools.ts';
 import { preset, resolvePreset } from './provider-catalog.ts';
 import { nativeReply, requestHeaders } from './provider-native.ts';
 import { networkKind, routePolicy } from './route-policy.ts';
 import { routedFetch } from './transport.ts';
+import { processMessages, prefillStart, messageParts, checkPrefillRejection, PrefillRejected } from './message-processing.ts';
 
 export function validateConnection(value: any): Connection {
   if (!value) throw new AppError('Invalid connection.');
   const provider = value.provider ?? 'custom'; preset(provider);
   const resolved = provider === 'custom' ? { endpoint: value.endpoint, dialect: value.dialect ?? 'chat-completions' } : resolvePreset(provider, value.variant, value.region, value.model);
-  if (!['chat-completions', 'responses', 'anthropic', 'gemini', 'speech'].includes(resolved.dialect)) throw new AppError('Unsupported API dialect.');
+  if (!['chat-completions', 'responses', 'anthropic', 'gemini', 'speech', 'speech-openai', 'images', 'gemini-images'].includes(resolved.dialect)) throw new AppError('Unsupported API dialect.');
   const auth = provider === 'custom' ? value.auth ?? 'auto' : 'auto';
   if (!['auto', 'bearer', 'x-api-key', 'x-goog-api-key', 'xi-api-key', 'none'].includes(auth)) throw new AppError('Unsupported authentication mode.');
   if (value.name !== undefined && (typeof value.name !== 'string' || value.name.length > 80)) throw new AppError('Connection name must be at most 80 characters.');
@@ -20,18 +21,46 @@ export function validateConnection(value: any): Connection {
   if (url.protocol !== 'https:' && !(url.protocol === 'http:' && (['127.0.0.1', '[::1]', 'localhost'].includes(url.hostname) || networkKind(url) !== 'regular'))) throw new AppError('Use HTTPS, or HTTP only for loopback / routed private-network endpoints.');
   const route = value.route ?? 'auto'; routePolicy(url.href, route, value.proxyUrl);
   if (typeof value.model !== 'string' || !value.model.trim() || value.model.length > 200) throw new AppError('Enter an exact model ID.');
-  return { ...resolved, endpoint: url.href.replace(/\/$/, ''), model: value.model.trim(), dialect: resolved.dialect, route, ...(value.proxyUrl ? { proxyUrl: routePolicy(url.href, route, value.proxyUrl).proxyUrl } : {}), provider, auth, ...(value.name?.trim() ? { name: value.name.trim() } : {}) };
+  const messageProcessing = value.messageProcessing ?? 'merge';
+  if (!['merge', 'single', 'separate'].includes(messageProcessing)) throw new AppError('Choose a valid message post-processing mode.');
+  return { ...resolved, endpoint: url.href.replace(/\/$/, ''), model: value.model.trim(), dialect: resolved.dialect, route, ...(value.proxyUrl ? { proxyUrl: routePolicy(url.href, route, value.proxyUrl).proxyUrl } : {}), provider, auth, messageProcessing, ...(value.name?.trim() ? { name: value.name.trim() } : {}) };
 }
-export interface ProviderResult { text: string; calls: ToolCall[]; usage: unknown; native?: any[]; reasoning_content?: string; reasoning_details?: any[]; responseId?: string }
+export interface ProviderResult { text: string; calls: ToolCall[]; usage: unknown; native?: any[]; reasoning_content?: string; reasoning_details?: any[]; responseId?: string; prefillFallback?: boolean }
 export async function streamReply(connection: Connection, key: string, messages: ProviderMessage[], enableTools: boolean, signal: AbortSignal, onText: (text: string) => void, transport?: typeof fetch): Promise<ProviderResult> {
   const checked = validateConnection(connection);
   transport ??= routedFetch(checked);
-  if (checked.dialect === 'speech') throw new AppError('ElevenLabs is a speech connection, not a chat model.');
+  const prepared = processMessages(messages, checked.messageProcessing, enableTools);
+  const hasPrefill = prefillStart(prepared) < prepared.length;
+  let emitted = false;
+  const report = (text: string) => { if (text) emitted = true; onText(text); };
+  const probing: typeof fetch = async (url, init) => {
+    const response = await transport!(url, init);
+    if (hasPrefill && !response.ok && await checkPrefillRejection(response, signal)) throw new PrefillRejected();
+    return response;
+  };
+  try { return await streamReplyOnce(checked, key, prepared, enableTools, signal, report, probing); }
+  catch (e) {
+    if (!(e instanceof PrefillRejected) || !hasPrefill || emitted || signal.aborted) throw e;
+    signal.throwIfAborted();
+    // Exactly one compatibility retry, same endpoint/model/key/route; raw messages
+    // and stored roles are unchanged. A failed retry propagates normally.
+    const fallback = processMessages(messages, checked.messageProcessing, enableTools, true);
+    try {
+      const result = await streamReplyOnce(checked, key, fallback, enableTools, signal, report, transport);
+      return { ...result, prefillFallback: true };
+    } catch (failure) {
+      if (signal.aborted) throw failure;
+      throw new AppError('Assistant prefill was rejected and the single user-message fallback failed. ' + (failure instanceof AppError ? failure.message : 'Request failed; no further retry was made.'), failure instanceof AppError ? failure.status : 502);
+    }
+  }
+}
+async function streamReplyOnce(checked: Connection, key: string, messages: ProviderMessage[], enableTools: boolean, signal: AbortSignal, onText: (text: string) => void, transport: typeof fetch): Promise<ProviderResult> {
+  if (isSpeech(checked.dialect) || isImage(checked.dialect)) throw new AppError('This is a media connection, not a chat model.');
   if (checked.dialect !== 'chat-completions') return nativeReply(checked, key, messages, enableTools, signal, onText, transport);
   const response = await transport(`${checked.endpoint}/chat/completions`, {
     method: 'POST', redirect: 'error', signal: AbortSignal.any([signal, AbortSignal.timeout(120000)]),
     headers: requestHeaders(checked, key),
-    body: JSON.stringify({ model: checked.model, messages: messages.map(({ native, ...m }) => m), stream: true, ...(enableTools ? { tools: toolDefinitions, tool_choice: 'auto' } : {}) })
+    body: JSON.stringify({ model: checked.model, messages: messages.map(({ native, images, parts, ...m }) => ({ ...m, content: images?.length || parts ? messageParts({ ...m, images, parts }).map(p => p.type === 'text' ? p : { type: 'image_url', image_url: { url: `data:${p.mime};base64,${p.data}` } }) : m.content })), stream: true, ...(enableTools ? { tools: toolDefinitions, tool_choice: 'auto' } : {}) })
   });
   if (!response.ok) { await response.body?.cancel(); throw new AppError(`Provider HTTP ${response.status}. Response body withheld to protect credentials.`, 502); }
   if (!response.headers.get('content-type')?.includes('text/event-stream') || !response.body) { await response.body?.cancel(); throw new AppError('Provider did not return an SSE stream.', 502); }

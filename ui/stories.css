@@ -1,0 +1,45 @@
+.story-panel { display: grid; gap: 16px; min-width: 0; }
+.story-panel p { margin: 0; }
+.story-panel details { border-top: 1px solid var(--border); padding-top: 14px; min-width: 0; }
+.story-panel details > :not(summary) { margin-top: 12px; }
+.story-panel summary { cursor: pointer; font-weight: 600; }
+.story-library { display: grid; gap: 6px; max-height: 300px; overflow: auto; }
+.story-library button { text-align: left; display: grid; gap: 4px; overflow-wrap: anywhere; }
+.story-library small, .memory-switch small { display: block; font-weight: 400; opacity: .75; }
+.story-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.memory-json { white-space: pre-wrap; overflow-wrap: anywhere; width: 100%; max-height: 420px; overflow: auto; font: 13px/1.55 Consolas, monospace; }
+textarea.memory-json { min-height: 260px; }
+.story-setup fieldset { border: 0; padding: 0; min-width: 0; display: grid; gap: 18px; }
+.story-setup details > label { display: grid; gap: 6px; }
+.story-setup details > label.check-label { display: flex; }
+.story-entry { padding: 12px; border: 1px solid var(--border); border-radius: 10px; }
+.setup-save { position: sticky; top: 0; background: var(--surface); z-index: 2; padding: 10px; align-items: center; border: 1px solid var(--border); border-radius: 8px; }
+.story-panel textarea { display: block; width: 100%; min-height: 90px; padding: 12px; border: 1px solid var(--border); border-radius: 8px; resize: vertical; background: var(--card); color: var(--text); font: 14px/1.6 Segoe UI, system-ui, sans-serif; }
+.story-panel textarea[rows="1"] { min-height: 48px; }
+.story-panel select { max-width: 100%; }
+.story-panel input, .story-panel select, .story-panel textarea, .story-panel summary { scroll-margin-top: 85px; }
+.story-setup .prompt-placement { border-top: 0; padding-top: 0; }
+.story-setup .prompt-placement summary { color: var(--muted); font-size: 12px; font-weight: 400; }
+.portrait-preview { width: 120px; height: 150px; object-fit: contain; }
+.portrait-strip { display: flex; gap: 20px; padding: 10px 24px; overflow-x: auto; max-height: 150px; flex-shrink: 0; }
+.portrait-strip figure { margin: 0; text-align: center; min-width: 80px; }
+.portrait-strip img { width: 80px; height: 95px; object-fit: contain; transform-origin: bottom center; }
+.portrait-strip figcaption { font-size: 12px; max-width: 120px; overflow-wrap: anywhere; }
+.avatar img { width: 100%; height: 100%; border-radius: inherit; object-fit: cover; }
+.idle-breathe { animation: portrait-breathe 4s ease-in-out infinite; }
+.idle-bounce { animation: portrait-bounce 2s ease-in-out infinite; }
+.idle-sway { animation: portrait-sway 4s ease-in-out infinite; }
+@keyframes portrait-breathe { 50% { transform: scaleY(1.025); } }
+@keyframes portrait-bounce { 50% { transform: translateY(-4px); } }
+@keyframes portrait-sway { 25% { transform: rotate(-1.5deg); } 75% { transform: rotate(1.5deg); } }
+@media(prefers-reduced-motion: reduce) { .idle-breathe, .idle-bounce, .idle-sway { animation: none; } }
+.memory-record { border: 1px solid var(--border); border-radius: 10px; padding: 12px; overflow-wrap: anywhere; }
+.authored-controls { max-width: var(--reading-width); margin: 0 auto 8px; font-size: 13px; }
+.authored-controls[open] { max-height: 210px; overflow-y: auto; padding: 8px; border: 1px solid var(--border); }
+.authored-controls summary { cursor: pointer; }
+.memory-fields { margin: 0; display: grid; gap: 6px; }
+.memory-fields dt { font-weight: 600; text-transform: capitalize; }
+.memory-fields dd { margin: 0 0 8px; white-space: pre-wrap; }
+.memory-switch { padding: 14px; border: 1px solid var(--border); border-radius: 12px; }
+.story-panel input[type=file] { max-width: 100%; }
+@media(max-width: 650px) { .top-actions { flex-wrap: wrap; } .topbar { flex-wrap: wrap; } }

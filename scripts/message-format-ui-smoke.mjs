@@ -1,0 +1,62 @@
+// Synthetic local providers and private test data only.
+import assert from 'node:assert/strict';
+import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
+import { join, resolve } from 'node:path';
+import { homedir } from 'node:os';
+import { pathToFileURL } from 'node:url';
+import { startServer } from '../src/server.ts';
+import { saveConnection } from '../src/connections.ts';
+import { memoryProvider } from '../test/fixtures/memory-provider.ts';
+let playwright;
+try { playwright = await import('playwright'); } catch { playwright = await import(pathToFileURL(process.env.LOWRITER_PLAYWRIGHT_MODULE || join(homedir(), '.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright/index.mjs')).href); }
+await mkdir('.test-data', { recursive: true }); await mkdir('artifacts', { recursive: true });
+const dir = await mkdtemp(resolve('.test-data/message-format-ui-')), provider = await memoryProvider();
+let app, browser, page; const errors = [], checks = [];
+try {
+  app = await startServer({ dataDir: dir, port: 0, credentialMode: 'legacy-test' });
+  await app.vault.unlock('synthetic-message-format-passphrase');
+  await saveConnection(app.store, app.vault, { provider: 'custom', name: 'Format fixture', endpoint: provider.endpoint, model: 'fixture', dialect: 'chat-completions', route: 'direct', auth: 'none', keyMode: 'clear' });
+  const c = app.store.create('rp', 'Format story');
+  for (const text of ['First user turn', 'Second user turn']) app.store.db.prepare("INSERT INTO messages(conversation,role,content,revision) VALUES(?,'user',?,0)").run(c.id, text);
+  browser = await playwright.chromium.launch({ headless: true, channel: process.env.LOWRITER_BROWSER_CHANNEL || (process.platform === 'win32' ? 'msedge' : undefined) });
+  const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, reducedMotion: 'reduce' });
+  await context.request.post(app.origin + '/api/login', { headers: { 'X-LoWriter': '1' }, data: { token: app.token } });
+  page = await context.newPage(); page.on('pageerror', e => errors.push(e.message)); await page.goto(app.origin);
+  await page.locator('.conversation-list button').filter({ hasText: 'Format story' }).click();
+  const composer = page.getByLabel('Message your writing partner'); await composer.fill('Third user turn'); await composer.press('Enter');
+  await page.locator('.message.assistant:not(.candidate)').waitFor();
+  assert.equal(provider.calls[0].messages.length, 2); assert.equal(provider.calls[0].messages[1].content, 'First user turn\n\nSecond user turn\n\nThird user turn');
+  assert.equal(app.store.allMessages(c.id).filter(m => m.role === 'user').length, 3);
+  checks.push('Default merge reaches the provider while separate saved user messages remain unchanged');
+  const open = async () => { await page.getByRole('button', { name: 'Connections', exact: false }).click(); await page.getByText('Message post-processing', { exact: true }).click(); };
+  await open(); const format = page.getByLabel('Message format', { exact: true });
+  assert.equal(await format.inputValue(), 'merge');
+  assert.deepEqual(await format.locator('option').allTextContents(), ['Merge consecutive roles (default)', 'Single user message', 'Separate messages']);
+  checks.push('Selector defaults to merge with requested merge, single-user, separate ordering');
+  await format.selectOption('single'); await page.getByRole('button', { name: 'Save connection', exact: true }).click();
+  await page.getByRole('status').filter({ hasText: 'Connection saved and selected.' }).waitFor();
+  await page.reload(); await page.locator('.message.assistant:not(.candidate)').waitFor(); await open(); assert.equal(await format.inputValue(), 'single');
+  await page.getByRole('button', { name: 'Close settings' }).click(); await composer.fill('Fourth user turn'); await composer.press('Enter');
+  await page.waitForFunction(() => document.querySelectorAll('.message.assistant:not(.candidate)').length === 2);
+  assert.deepEqual(provider.calls[1].messages.map(m => m.role), ['system', 'user']);
+  assert.ok(provider.calls[1].messages[1].content.includes('Mara watches the harbor water.'));
+  checks.push('Single-user setting survives reload and combines dialogue on the actual request');
+  await open(); await format.selectOption('separate'); await page.getByRole('button', { name: 'Save connection', exact: true }).click();
+  await page.getByRole('status').filter({ hasText: 'Connection saved and selected.' }).waitFor();
+  await page.getByRole('button', { name: 'Close settings' }).click(); await composer.fill('Fifth user turn'); await composer.press('Enter');
+  await page.waitForFunction(() => document.querySelectorAll('.message.assistant:not(.candidate)').length === 3);
+  assert.equal(provider.calls[2].messages.filter(m => m.role === 'user').length, 5);
+  checks.push('Separate mode preserves every user/assistant message boundary');
+  await open(); await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole('button', { name: 'Reset message format', exact: true }).click(); assert.equal(await format.inputValue(), 'merge');
+  assert.equal(app.engine.connection().messageProcessing, 'separate');
+  await page.getByRole('button', { name: 'Save connection', exact: true }).click(); await page.getByRole('status').filter({ hasText: 'Connection saved and selected.' }).waitFor();
+  assert.equal(app.engine.connection().messageProcessing, 'merge');
+  await page.screenshot({ path: 'artifacts/message-format-mobile.png' });
+  assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+  checks.push('Mobile format reset changes only the draft until saved; no horizontal overflow');
+  assert.deepEqual(errors, []);
+  const report = { date: new Date().toISOString(), checks, pageErrors: errors, browser: await browser.version(), liveProvider: 'Not tested; loopback fixtures only' };
+  await writeFile('artifacts/message-format-ui-report.json', JSON.stringify(report, null, 2)); console.log(JSON.stringify(report, null, 2));
+} catch (e) { if (page) { await page.screenshot({ path: 'artifacts/message-format-failure.png' }); console.error((await page.locator('body').innerText()).slice(-7000)); } throw e; }
+finally { await browser?.close(); await app?.close(); await provider.close(); }

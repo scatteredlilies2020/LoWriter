@@ -13,14 +13,17 @@ import { projectRoot } from './project-tools.ts';
 import type { Connection } from './shared.ts';
 import { BrowserLaunch } from './browser-launch.ts';
 import { profiles, saveConnection, connectionKey } from './connections.ts';
-import { listModels, listVoices, speak } from './provider-services.ts';
+import { listModels, listVoices, speak, generateImage } from './provider-services.ts';
+import { textHash } from './media.ts';
+import { Chats } from './chats.ts';
+import { importCard, importLore, storyContext } from './story-kit.ts';
 
 function matches(a: string, b: string): boolean { const aa = Buffer.from(a), bb = Buffer.from(b); return aa.length === bb.length && timingSafeEqual(aa, bb); }
-async function body(req: IncomingMessage): Promise<any> {
+async function body(req: IncomingMessage, max = 100000): Promise<any> {
   if (!req.headers['content-type']?.startsWith('application/json')) throw new AppError('JSON Content-Type is required.', 415);
-  let data = '', bytes = 0;
-  for await (const chunk of req) { bytes += chunk.length; if (bytes > 100000) throw new AppError('Request too large.', 413); data += chunk; }
-  try { const parsed = JSON.parse(data); if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error(); return parsed; }
+  const chunks: Buffer[] = []; let bytes = 0;
+  for await (const chunk of req) { bytes += chunk.length; if (bytes > max) throw new AppError('Request too large.', 413); chunks.push(chunk); }
+  try { const parsed = JSON.parse(Buffer.concat(chunks).toString('utf8')); if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error(); return parsed; }
   catch { throw new AppError('Invalid JSON body.'); }
 }
 function json(res: ServerResponse, value: unknown, status = 200): void { res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' }); res.end(JSON.stringify(value)); }
@@ -49,6 +52,7 @@ export async function startServer(options: ServerOptions) {
   try { store = new Store(join(dir, 'lowriter.sqlite')); }
   catch (e) { await unlink(join(lock, 'owner.json')); await rmdir(lock); throw e; }
   const vault = new Vault(join(dir, 'vault.json')), engine = new Engine(store, vault);
+  const chats = new Chats(store, engine.memory);
   try { if (options.credentialMode !== 'legacy-test') await vault.initializeAutomatic(); }
   catch (e) { store.close(); await unlink(join(lock, 'owner.json')); await rmdir(lock); throw e; }
   if (options.demo && (!store.setting('connection') || store.setting('connection').demo)) store.setSetting('connection', { ...options.demo, demo: true });
@@ -60,6 +64,7 @@ export async function startServer(options: ServerOptions) {
   const closed = new Promise<void>(resolveClosed => { closedResolve = resolveClosed; });
   let origin = '', stopping = false, attempts: number[] = [], administrativeWrite = false;
   const providerRequests = new Map<AbortController, string>();
+  const mediaReservations = new Set<string>(), pendingMedia = new Set<Promise<void>>();
   const stopProviderRequests = () => { for (const controller of providerRequests.keys()) controller.abort(); };
   const server = createServer(async (req, res) => {
     res.setHeader('Cache-Control', 'no-store');
@@ -86,7 +91,8 @@ export async function startServer(options: ServerOptions) {
         let data: Buffer; try { data = await readFile(join(staticDir, file[0])); } catch { throw new AppError('GUI not built. Run the build command first.', 503); }
         res.writeHead(200, { 'Content-Type': file[1] + '; charset=utf-8' }); res.end(data); return;
       }
-      if (req.headers['x-lowriter'] !== '1') throw new AppError('Local API header is required.', 403);
+      const mediaRead = req.method === 'GET' && /^\/api\/media\/[a-f0-9-]{36}$/.test(path);
+      if (!mediaRead && req.headers['x-lowriter'] !== '1') throw new AppError('Local API header is required.', 403);
       if (path === '/api/login' && req.method === 'POST') {
         attempts = attempts.filter(t => t > Date.now() - 60000);
         if (attempts.length >= 6) throw new AppError('Too many pairing attempts. Wait one minute.', 429);
@@ -98,19 +104,37 @@ export async function startServer(options: ServerOptions) {
       const bearer = req.headers.authorization?.startsWith('Bearer ') ? req.headers.authorization.slice(7) : '';
       const cookie = (req.headers.cookie ?? '').split(';').map(s => s.trim()).find(s => s.startsWith(cookieName + '='))?.slice(cookieName.length + 1) ?? '';
       if (!matches(bearer || cookie, token)) throw new AppError('Open LoWriter using its launcher to reconnect automatically.', 401);
+      if (mediaRead) {
+        const a = engine.media.asset(path.split('/').at(-1)!);
+        res.writeHead(200, { 'Content-Type': a.mime, 'Content-Length': a.data.length, 'Content-Disposition': `inline; filename="lowriter-${a.kind}.${a.mime === 'image/jpeg' ? 'jpg' : a.mime === 'audio/mpeg' ? 'mp3' : a.mime.split('/')[1]}"` }); res.end(a.data); return;
+      }
+      if (path === '/api/media-state' && req.method === 'GET') { json(res, { imageConnection: store.setting('imageConnection'), speechConnection: store.setting('speechConnection'), voices: engine.media.voices() }); return; }
       if (path === '/api/state' && req.method === 'GET') {
-        json(res, { conversations: store.conversations(), connection: engine.connection(), connections: profiles(store), speechConnection: store.setting('speechConnection') || null, vault: { exists: await vault.exists(), unlocked: !!vault.key, automatic: vault.automatic, migrationRequired: vault.migrationRequired, protection: process.platform === 'win32' ? 'Windows account encryption' : 'App-private file permissions' }, capabilities: { platform: process.platform, runtime: process.version, rp: 'basic chat; memory/story/import pending', coding: 'trusted text tools and harmless checks', shell: false, browser: false, desktop: false, sync: false, termux: 'not device-validated' } }); return;
+json(res, { conversations: store.conversations(), connection: engine.connection(), connections: profiles(store), speechConnection: store.setting('speechConnection') || null, vault: { exists: await vault.exists(), unlocked: !!vault.key, automatic: vault.automatic, migrationRequired: vault.migrationRequired, protection: process.platform === 'win32' ? 'Windows account encryption' : 'App-private file permissions' }, capabilities: { platform: process.platform, runtime: process.version, rp: 'story cards, keyword lore, branches, continuation and optional Continuity core; partial ST behavior compatibility', coding: 'general-purpose chat and optional trusted project tools; no general shell, browser or desktop control', shell: false, browser: false, desktop: false, sync: false, termux: 'not device-validated' } }); return;
       }
       const parts = path.split('/').slice(2), id = parts[1];
-      if (parts[0] === 'conversations' && id && req.method === 'GET') {
+      if (path === '/api/chats' && req.method === 'GET') {
+        const query = new URL(req.url!, origin).searchParams;
+        json(res, store.library(query.get('query') || '', Number(query.get('offset') || 0))); return;
+      }
+      if (parts[0] === 'conversations' && id && parts.length === 3 && req.method === 'GET') {
+        if (parts[2] === 'memory-source') { if (store.conversation(id).mode !== 'rp') throw new AppError('Story sources only.'); const q = new URL(req.url!, origin).searchParams, from = Number(q.get('from')), to = Number(q.get('to')); if (!q.has('from') || !q.has('to') || !Number.isSafeInteger(from) || !Number.isSafeInteger(to) || from < 0 || to < from || to - from > 19) throw new AppError('Choose a source range of up to 20 messages.'); json(res, { messages: store.allMessages(id).slice(from, to + 1).map((m, i) => ({ index: from + i, role: m.role, speaker: m.speaker, content: m.content })) }); return; }
+        if (parts[2] === 'story') { json(res, { setup: engine.stories.get(id), versions: engine.stories.versions(id), presets: engine.stories.presets(), revision: store.conversation(id).revision }); return; }
+        if (parts[2] === 'export') { json(res, chats.export(id, new URL(req.url!, origin).searchParams.get('memory') === '1')); return; }
+        if (parts[2] === 'memory') {
+          if (store.conversation(id).mode !== 'rp') throw new AppError('Memory is available for stories only.');
+          json(res, { ...engine.memory.inspect(id), ...engine.memoryStatus(id) }); return;
+        }
+      }
+      if (parts[0] === 'conversations' && id && parts.length === 2 && req.method === 'GET') {
         const before = Number(new URL(req.url!, origin).searchParams.get('before') ?? Number.MAX_SAFE_INTEGER);
         if (!Number.isSafeInteger(before) || before < 1) throw new AppError('Invalid history cursor.');
         const c = store.conversation(id), latest = store.latestJob(id);
-        json(res, { conversation: c, messages: store.messages(id, before), job: latest ? engine.snapshot(latest.id) : null }); return;
+        json(res, { conversation: c, messages: store.messages(id, before).map(m => ({ ...m, media: engine.media.list(m) })), job: latest ? engine.snapshot(latest.id) : null, mediaBusy: mediaReservations.has(id), memory: c.mode === 'rp' ? engine.memoryStatus(id) : null }); return;
       }
       if (parts[0] === 'jobs' && id && req.method === 'GET') { json(res, engine.snapshot(id)); return; }
       if (req.method !== 'POST') throw new AppError('Not found.', 404);
-      const input = await body(req);
+      const input = await body(req, path === '/api/chats/import' || parts[2]?.startsWith('story') ? 16000000 : parts[2] === 'memory-review' ? 2000000 : 100000);
       if (path === '/api/launch') {
         // Browser cookies cannot arm a new launch; the private local client can.
         if (!matches(bearer, token)) throw new AppError('The local launcher is required.', 403);
@@ -121,13 +145,106 @@ export async function startServer(options: ServerOptions) {
       if (path === '/api/logout') { res.setHeader('Set-Cookie', `${cookieName}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0`); json(res, { ok: true }); return; }
       if (path === '/api/stop') { stopProviderRequests(); await engine.stopAll(); json(res, { ok: true }); return; }
       if (parts[0] === 'jobs' && parts[2] === 'cancel') { await engine.cancel(id); json(res, { ok: true }); return; }
+      if (parts[0] === 'conversations' && parts[2] === 'memory-toggle') {
+        // Turning off cancels background memory immediately; no media reservation needed.
+        engine.memory.toggle(id, input.enabled, input.revision);
+        if (input.enabled === false) { engine.cancelMemory(id); engine.memoryErrors.delete(id); }
+        if (input.enabled) engine.startMemory(id);
+        json(res, engine.memoryStatus(id)); return;
+      }
+      if (parts[0] === 'conversations' && parts[2] === 'memory-profile') {
+        if (administrativeWrite) throw new AppError('Settings update in progress.', 409);
+        engine.memory.selectProfile(id, input.profile, input.revision);
+        const previous = engine.memoryActive.get(id);
+        previous?.controller.abort();
+        if (previous) await previous.finished;
+        engine.memoryErrors.delete(id);
+        engine.startMemory(id);
+        json(res, engine.memoryStatus(id)); return;
+      }
+      if (parts[0] === 'conversations' && mediaReservations.has(id)) throw new AppError('Media is generating for this conversation. Wait or use Stop all.', 409);
       if (parts[0] === 'conversations' && parts[2] === 'send') {
         if (administrativeWrite) throw new AppError('Settings update in progress.', 409);
         if (!Number.isSafeInteger(input.revision)) throw new AppError('Expected revision is required.');
         json(res, engine.start(id, input.text, input.revision), 202); return;
       }
       if (administrativeWrite) throw new AppError('Another settings/project update is in progress.', 409);
+      if (parts[0] === 'conversations' && parts[2]?.startsWith('story')) {
+        engine.stories.get(id);
+        const clean = (v: any) => JSON.parse(vault.redact(JSON.stringify(v), [token]));
+        if (parts[2] === 'story-save') { engine.cancelMemory(id); json(res, engine.stories.save(id, clean(input.setup), input.revision)); return; }
+        if (parts[2] === 'story-authored') { engine.stories.authored(id, input.role, vault.redact(requireString(input.text, 'message', 64000), [token]), vault.redact(typeof input.speaker === 'string' ? input.speaker : '', [token]), input.revision); engine.cancelMemory(id); json(res, { ok: true }); return; }
+        if (parts[2] === 'story-import') { json(res, clean(input.kind === 'lore' ? importLore(JSON.parse(requireString(input.text, 'lorebook JSON', 8000000))) : importCard(input.text, input.png))); return; }
+        if (parts[2] === 'story-preview') { const s = engine.stories.get(id), recent = store.contextMessages(id, Number.MAX_SAFE_INTEGER, s.contextMessages); let chars = 0; const included = []; for (const m of recent.toReversed()) { if (chars + m.content.length > s.contextChars) break; chars += m.content.length; included.unshift(m); } json(res, storyContext(s, included.map(m => m.content).join('\n'))); return; }
+        if (parts[2] === 'story-restore') { engine.cancelMemory(id); json(res, engine.stories.restore(id, input.version, input.revision)); return; }
+        if (parts[2] === 'story-greeting') { engine.stories.greeting(id, input.index, input.revision); json(res, { ok: true }); return; }
+        if (parts[2] === 'story-preset-save') { engine.stories.savePreset(vault.redact(requireString(input.name, 'preset name', 100), [token]), clean(input.setup)); json(res, { ok: true }); return; }
+        if (parts[2] === 'story-preset-load') { json(res, engine.stories.preset(requireString(input.preset, 'preset ID', 100))); return; }
+        if (parts[2] === 'story-preset-delete') { engine.stories.store.db.prepare('DELETE FROM story_presets WHERE id=?').run(requireString(input.preset, 'preset ID', 100)); json(res, { ok: true }); return; }
+        if (parts[2] === 'story-branch') { json(res, { conversation: engine.stories.branch(id, input.through, input.revision, input.title) }, 201); return; }
+      }
+      if (path === '/api/chats/import') { json(res, chats.import(input.text, input.includeMemory, input.title, v => vault.redact(v, [token])), 201); return; }
+      if (parts[0] === 'conversations' && parts[2] === 'rename') { store.rename(id, vault.redact(requireString(input.title, 'title', 100), [token]), input.revision); json(res, { ok: true }); return; }
+      if (parts[0] === 'conversations' && parts[2] === 'memory-update') {
+        store.writable(id, input.revision);
+        if (store.conversation(id).mode !== 'rp' || !engine.memory.row(id).enabled) throw new AppError('Turn on story memory first.');
+        engine.startMemory(id); json(res, engine.memoryStatus(id), 202); return;
+      }
+      if (parts[0] === 'conversations' && parts[2] === 'memory-review') {
+        if (engine.memoryActive.has(id)) throw new AppError('Memory is updating. Use Stop all first.', 409);
+        const result = input.result === undefined ? undefined : JSON.parse(vault.redact(JSON.stringify(input.result), [token]));
+        engine.memory.review(id, input.revision, input.accept, result, input.reviewId); json(res, engine.memoryStatus(id)); return;
+      }
+      if (parts[0] === 'conversations' && ['memory-correct', 'memory-undo-correction'].includes(parts[2])) {
+        if (engine.memoryActive.has(id)) throw new AppError('Memory is updating. Stop updates first.', 409);
+        if (parts[2] === 'memory-correct') engine.memory.correct(id, input.collection, input.recordId, vault.redact(requireString(input.text, 'correction', 4000), [token]), input.revision, input.version);
+        else engine.memory.undoCorrection(id, input.correction, input.revision, input.version);
+        json(res, engine.memory.inspect(id)); return;
+      }
+      if (path === '/api/voice-presets') { json(res, engine.media.saveVoice({ ...input, name: vault.redact(requireString(input.name, 'voice name', 80), [token]) })); return; }
+      if (parts[0] === 'conversations' && parts[2] === 'messages' && parts.length === 5) {
+        const messageId = Number(parts[3]), action = parts[4];
+        if (action === 'continue') { if (!Number.isSafeInteger(input.revision)) throw new AppError('Expected revision is required.'); json(res, engine.start(id, '', input.revision, messageId, true), 202); return; }
+        if (action === 'regenerate') {
+          if (!Number.isSafeInteger(input.revision)) throw new AppError('Expected revision is required.');
+          json(res, engine.start(id, '', input.revision, messageId), 202); return;
+        }
+        if (action === 'swipe') { store.swipe(id, messageId, input.variant, input.revision); json(res, { ok: true }); return; }
+        if (action === 'select-image') { engine.media.select(store.message(id, messageId), requireString(input.asset, 'image ID', 100), input.useInChat, input.revision); json(res, { ok: true }); return; }
+        if (['generate-image', 'narrate'].includes(action)) {
+          store.writable(id, input.revision);
+          let m = store.message(id, messageId);
+          // Existing databases acquire a stable variant before any media is attached.
+          if (m.role === 'assistant' && !m.active_variant) { store.ensureVariant(m); m = store.message(id, messageId); }
+          const voice = action === 'narrate' ? engine.media.voices().find(v => v.id === input.voicePreset) : undefined;
+          if (action === 'narrate' && !voice) throw new AppError('Add or select a saved voice preset first.');
+          const selectedProfile = action === 'narrate' ? voice!.connection : input.connection;
+          const profile = profiles(store).find(p => p.profileId === selectedProfile);
+          if (!profile) throw new AppError('Choose a saved media connection.');
+          const connection = validateConnection(profile), key = vault.get(profile.credentialId!);
+          const prompt = action === 'generate-image' ? vault.redact(requireString(input.prompt, 'image prompt', 8000), [key, token]) : m.content;
+          if (action === 'generate-image' && typeof input.useInChat !== 'boolean') throw new AppError('Choose whether to use the generated image in chat.');
+          if (action === 'narrate' && prompt.length > 5000) throw new AppError('Read-aloud supports messages up to 5,000 characters. Shorten the message or use the speech panel for an excerpt.');
+          const fingerprint = textHash(JSON.stringify([connection, profile.credentialId, prompt, voice?.voice, voice?.speed]));
+          const cached = action === 'narrate' ? engine.media.cached(m, fingerprint) : undefined;
+          if (cached) { json(res, { asset: cached, cached: true }); return; }
+          engine.media.room(m);
+          if (providerRequests.size >= 3) throw new AppError('Provider request limit reached. Wait or use Stop all.', 429);
+          const controller = new AbortController(); providerRequests.set(controller, action); mediaReservations.add(id);
+          let done!: () => void; const pending = new Promise<void>(r => { done = r; }); pendingMedia.add(pending);
+          const abort = () => controller.abort(); res.once('close', abort);
+          try {
+            const generated = action === 'generate-image' ? await generateImage(connection, key, { ...input, prompt }, controller.signal) : { bytes: await speak(connection, key, { voice: voice!.voice, speed: voice!.speed, text: prompt }, controller.signal), mime: 'audio/mpeg' };
+            controller.signal.throwIfAborted();
+            const label = action === 'narrate' ? voice!.name : connection.name || connection.model;
+            const asset = engine.media.add(m, action === 'narrate' ? 'audio' : 'image', generated.bytes, generated.mime, prompt, label, fingerprint, input.useInChat);
+            json(res, { asset, cached: false });
+          } finally { res.off('close', abort); providerRequests.delete(controller); mediaReservations.delete(id); done(); pendingMedia.delete(pending); }
+          return;
+        }
+      }
       if (parts[0] === 'conversations' && parts[2] === 'messages' && parts[4] === 'edit' && parts.length === 5) {
+        engine.cancelMemory(id);
         const text = vault.redact(requireString(input.text, 'message', 64000), [token]);
         json(res, store.editMessage(id, Number(parts[3]), text, input.revision)); return;
       }
@@ -169,7 +286,7 @@ export async function startServer(options: ServerOptions) {
           vault.lock(); json(res, { ok: true }); return;
         }
         if (path === '/api/connection') {
-          if (engine.active.size) throw new AppError('Stop running jobs before changing connections.', 409);
+          if (engine.active.size || mediaReservations.size || engine.memoryActive.size) throw new AppError('Stop running jobs before changing connections.', 409);
           json(res, await saveConnection(store, vault, input)); return;
         }
         throw new AppError('Not found.', 404);
@@ -186,7 +303,7 @@ export async function startServer(options: ServerOptions) {
     if (closing) return closing;
     stopping = true;
     closing = (async () => {
-      stopProviderRequests(); await engine.stopAll(); vault.lock();
+      stopProviderRequests(); await engine.stopAll(); await Promise.allSettled([...pendingMedia]); vault.lock();
       await new Promise<void>(yes => { server.closeAllConnections(); server.close(() => yes()); });
       store.close(); await unlink(join(dir, 'client.json')).catch(() => {}); await unlink(join(lock, 'owner.json')); await rmdir(lock);
       closedResolve();

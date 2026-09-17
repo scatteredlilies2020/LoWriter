@@ -10,6 +10,9 @@ export interface ProviderPreset {
 // Source links and verification scope: docs/PROVIDERS.md.
 export const providers: ProviderPreset[] = [
   { id: 'openai', name: 'OpenAI', endpoint: 'https://api.openai.com/v1', dialect: 'responses' },
+  { id: 'openai-images', name: 'OpenAI · Images', endpoint: 'https://api.openai.com/v1', dialect: 'images', models: ['gpt-image-2.5-flare', 'gpt-image-2.5-sunburst'], note: 'Image generation saved separately from chat. Each Generate action can use credits.' },
+  { id: 'openai-speech', name: 'OpenAI · Speech', endpoint: 'https://api.openai.com/v1', dialect: 'speech-openai', models: ['gpt-4o-mini-tts', 'tts-1', 'tts-1-hd'], note: 'Built-in voice names or a custom voice ID. Voice availability depends on the selected model.' },
+  { id: 'gemini-images', name: 'Gemini · Images', endpoint: 'https://generativelanguage.googleapis.com/v1beta', dialect: 'gemini-images', note: 'Choose an image-output-capable model. Uses native generateContent; saved separately from chat.' },
   { id: 'gemini', name: 'Gemini', endpoint: 'https://generativelanguage.googleapis.com/v1beta', dialect: 'gemini' },
   { id: 'glm', name: 'GLM · Z.AI', endpoint: 'https://api.z.ai/api/paas/v4', dialect: 'chat-completions', models: ['glm-5.3'], discovery: false, note: 'Z.AI general API billing. Subscription/coding-plan URLs are not interchangeable; use Custom for a different plan.' },
   { id: 'minimax', name: 'MiniMax', endpoint: 'https://api.minimax.io/anthropic/v1', dialect: 'anthropic', models: ['MiniMax-M2.7', 'MiniMax-M2.7-highspeed', 'MiniMax-M2.5'], discovery: false, note: 'International API; native Messages format preserves reasoning/tool blocks.' },

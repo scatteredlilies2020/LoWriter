@@ -2,6 +2,7 @@ import { AppError } from './shared.ts';
 import type { Connection, ProviderMessage, ToolCall } from './shared.ts';
 import type { ProviderResult } from './provider.ts';
 import { toolDefinitions } from './project-tools.ts';
+import { messageParts } from './message-processing.ts';
 
 const fail = (message = 'Malformed or incomplete native provider stream.'): never => { throw new AppError(message, 502); };
 export function requestHeaders(c: Connection, key: string): Record<string, string> {
@@ -13,7 +14,7 @@ export function requestHeaders(c: Connection, key: string): Record<string, strin
     return headers;
   }
   if (c.dialect === 'anthropic') { headers['anthropic-version'] = '2023-06-01'; if (key) headers['x-api-key'] = key; }
-  else if (c.dialect === 'gemini' && c.provider !== 'opencode') { if (key) headers['x-goog-api-key'] = key; }
+  else if (['gemini', 'gemini-images'].includes(c.dialect) && c.provider !== 'opencode') { if (key) headers['x-goog-api-key'] = key; }
   else if (c.dialect === 'speech') { if (key) headers['xi-api-key'] = key; }
   else if (key) headers.Authorization = `Bearer ${key}`;
   return headers;
@@ -25,7 +26,7 @@ export function nativeRequest(c: Connection, messages: ProviderMessage[], tools:
     const input = messages.flatMap((m): any[] => {
       if (m.native) return m.native;
       if (m.role === 'tool') return [{ type: 'function_call_output', call_id: m.tool_call_id, output: m.content }];
-      return [{ role: m.role, content: m.content || '' }, ...(m.tool_calls ?? []).map(t => ({ type: 'function_call', call_id: t.id, name: t.function.name, arguments: t.function.arguments }))];
+      return [{ role: m.role, content: m.images?.length || m.parts ? messageParts(m).map(p => p.type === 'text' ? { type: 'input_text', text: p.text } : { type: 'input_image', image_url: `data:${p.mime};base64,${p.data}` }) : m.content || '' }, ...(m.tool_calls ?? []).map(t => ({ type: 'function_call', call_id: t.id, name: t.function.name, arguments: t.function.arguments }))];
     });
     return { url: c.endpoint + '/responses', body: { model: c.model, input, stream: true, store: false, include: ['reasoning.encrypted_content'], ...(tools ? { tools: toolDefinitions.map(t => ({ type: 'function', ...t.function, strict: false })), tool_choice: 'auto' } : {}) } };
   }
@@ -34,9 +35,9 @@ export function nativeRequest(c: Connection, messages: ProviderMessage[], tools:
     for (const m of rest) {
       const role = m.role === 'tool' ? 'user' : m.role;
       const content = m.native ?? (m.role === 'tool' ? [{ type: 'tool_result', tool_use_id: m.tool_call_id, content: m.content || '' }] : [
-        ...(m.content ? [{ type: 'text', text: m.content }] : []), ...(m.tool_calls ?? []).map(t => ({ type: 'tool_use', id: t.id, name: t.function.name, input: JSON.parse(t.function.arguments) })),
+        ...messageParts(m).map(p => p.type === 'text' ? p : { type: 'image', source: { type: 'base64', media_type: p.mime, data: p.data } }), ...(m.tool_calls ?? []).map(t => ({ type: 'tool_use', id: t.id, name: t.function.name, input: JSON.parse(t.function.arguments) })),
       ]);
-      if (converted.at(-1)?.role === role) converted.at(-1).content.push(...content); else converted.push({ role, content });
+      if (c.messageProcessing !== 'separate' && converted.at(-1)?.role === role) converted.at(-1).content.push(...content); else converted.push({ role, content });
     }
     return { url: c.endpoint + '/messages', body: { model: c.model, system, messages: converted, max_tokens: 8192, stream: true, ...(tools ? { tools: toolDefinitions.map(t => ({ name: t.function.name, description: t.function.description, input_schema: t.function.parameters })) } : {}) } };
   }
@@ -46,9 +47,9 @@ export function nativeRequest(c: Connection, messages: ProviderMessage[], tools:
     for (const m of rest) {
       const role = m.role === 'assistant' ? 'model' : 'user';
       const parts = m.native ?? (m.role === 'tool' ? [{ functionResponse: { name: names.get(m.tool_call_id!) || fail('Unknown Gemini tool result.'), response: { result: m.content }, ...(m.tool_call_id?.startsWith('gemini-local-') ? {} : { id: m.tool_call_id }) } }] : [
-        ...(m.content ? [{ text: m.content }] : []), ...(m.tool_calls ?? []).map(t => ({ functionCall: { name: t.function.name, args: JSON.parse(t.function.arguments) } })),
+        ...messageParts(m).map(p => p.type === 'text' ? { text: p.text } : { inlineData: { mimeType: p.mime, data: p.data } }), ...(m.tool_calls ?? []).map(t => ({ functionCall: { name: t.function.name, args: JSON.parse(t.function.arguments) } })),
       ]);
-      if (contents.at(-1)?.role === role) contents.at(-1).parts.push(...parts); else contents.push({ role, parts });
+      if (c.messageProcessing !== 'separate' && contents.at(-1)?.role === role) contents.at(-1).parts.push(...parts); else contents.push({ role, parts });
     }
     return { url: `${c.endpoint}/models/${encodeURIComponent(c.model.replace(/^models\//, ''))}:streamGenerateContent?alt=sse`, body: { systemInstruction: { parts: [{ text: system }] }, contents, ...(tools ? { tools: [{ functionDeclarations: toolDefinitions.map(t => ({ name: t.function.name, description: t.function.description, parameters: t.function.parameters })) }] } : {}) } };
   }

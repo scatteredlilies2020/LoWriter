@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { AppError } from './shared.ts';
+import { AppError, isSpeech, isImage } from './shared.ts';
 import type { Connection } from './shared.ts';
 import type { Store } from './store.ts';
 import type { Vault } from './vault.ts';
@@ -32,7 +32,8 @@ export async function saveConnection(store: Store, vault: Vault, input: any): Pr
   await vault.set(id, key);
   const next = previous.map(p => p.credentialId === id ? { ...p, hasKey: !!key } : p); if (index < 0) next.push(profile); else next[index] = profile;
   store.setSetting('connections', next);
-  if (c.dialect === 'speech') store.setSetting('speechConnection', profile);
+  if (isSpeech(c.dialect)) store.setSetting('speechConnection', profile);
+  else if (isImage(c.dialect)) store.setSetting('imageConnection', profile);
   else { store.setSetting('connection', profile); store.setSetting('hasKey', !!key); }
   return profile;
 }

@@ -195,8 +195,18 @@ try {
   await page.getByText('cancelled · uncommitted candidate').waitFor();
   assert.equal(app.store.messages(story.id).length, 3);
   checks.push('GUI cancellation leaves candidate uncommitted');
-  await page.getByRole('button', { name: 'Coding', exact: true }).click();
-  await page.getByRole('button', { name: 'New coding task', exact: false }).click();
+  await page.getByRole('button', { name: 'Assistant', exact: true }).click();
+  await page.getByText('Ask questions, explore ideas, draft something, or work on code.', { exact: false }).waitFor();
+  await page.screenshot({ path: 'artifacts/assistant-welcome.png' });
+  await page.getByLabel('Ask a question or describe a task').fill('Explain why the sky is blue.');
+  await page.getByLabel('Ask a question or describe a task').press('Enter');
+  await page.locator('.message.assistant:not(.candidate)').waitFor();
+  const everyday = app.store.conversations().find(c => c.mode === 'coding');
+  assert.equal(everyday.title, 'Explain why the sky is blue.'); assert.equal(everyday.trusted, 0); assert.ok(!everyday.project);
+  assert.equal(app.store.latestJob(everyday.id).actions.length, 0);
+  assert.equal(await page.getByRole('button', { name: 'Story setup', exact: true }).count(), 0);
+  checks.push('Assistant sends an everyday question with Enter without selecting a project; no story controls or file actions');
+  await page.getByRole('button', { name: 'New chat', exact: false }).click();
   await page.getByRole('button', { name: 'Choose project', exact: true }).click();
   await page.getByLabel('Absolute folder path').fill(project);
   await page.getByRole('button', { name: 'Select without trust' }).click();
@@ -225,6 +235,7 @@ try {
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
   await page.getByRole('button', { name: 'Open navigation' }).click();
   await page.getByRole('button', { name: 'Writing', exact: true }).click();
+  await page.getByRole('button', { name: 'Open navigation' }).click();
   await page.getByRole('button', { name: 'New story', exact: false }).click();
   await page.getByRole('heading', { name: 'Every world starts with a few words.' }).waitFor();
   await page.screenshot({ path: 'artifacts/mobile-dark.png' });
@@ -256,7 +267,7 @@ try {
     assert.equal(order.key, order.base + 1);
     assert.equal(await page.getByLabel('API key', { exact: false }).getAttribute('type'), 'password');
   }
-  assert.equal(await provider.locator('option').count(), 17);
+  assert.equal(await provider.locator('option').count(), 20);
   const providerIds = await provider.locator('option').evaluateAll(options => options.map(o => o.value));
   for (const id of providerIds.filter(id => id !== 'custom')) {
     await provider.selectOption(id);
@@ -265,8 +276,8 @@ try {
     assert.equal(await page.getByLabel('Network route', { exact: true }).inputValue(), 'auto');
     await assertConnectionFieldOrder();
   }
-  checks.push('All 16 requested providers selectable with automatic API bases and automatic network routing');
-  for (const category of ['chat-completions', 'responses', 'anthropic', 'gemini', 'speech']) {
+  checks.push('All 19 built-in presets selectable with automatic API bases and automatic network routing');
+  for (const category of ['chat-completions', 'responses', 'anthropic', 'gemini', 'speech', 'speech-openai', 'images', 'gemini-images']) {
     await page.getByLabel('API category', { exact: true }).selectOption(category);
     assert.equal(await provider.inputValue(), 'custom');
     await assertConnectionFieldOrder();
@@ -282,7 +293,7 @@ try {
     await page.getByLabel('API base URL', { exact: true }).fill('https://synthetic.invalid/v1');
     await page.getByRole('status').filter({ hasText: 'Automatic route: regular / direct.' }).waitFor();
   }
-  checks.push('Custom endpoints available in all five categories; live route hint switches regular/onion/I2P');
+  checks.push('Custom endpoints available in all eight categories; live route hint switches regular/onion/I2P');
   checks.push('Connection name, API base and masked key are adjacent and ordered for all built-in providers and custom categories');
   await page.getByLabel('API category', { exact: true }).selectOption('anthropic');
   await page.getByLabel('API base URL', { exact: true }).fill('http://synthetic.onion/v1');
