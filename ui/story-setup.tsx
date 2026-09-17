@@ -1,16 +1,37 @@
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useErrorBoundary, useState } from 'preact/hooks';
 import { blankStory } from '../src/story-types.ts';
 import type { StorySetup, LoreEntry, StoryPortrait, PromptField, PromptPlacement, AdditionalInstruction } from '../src/story-types.ts';
 import type { VoiceProfile } from '../src/shared.ts';
 import './stories.css';
 
-async function api(path: string, value?: unknown): Promise<any> { const r = await fetch('/api' + path, { method: value === undefined ? 'GET' : 'POST', headers: { 'X-LoWriter': '1', 'Content-Type': 'application/json' }, body: value === undefined ? undefined : JSON.stringify(value) }); const v = await r.json(); if (!r.ok) throw new Error(v.error || 'Request failed.'); return v; }
-export function StorySetupPanel({ id, voices, onChanged, onDirty }: { id: string; voices: VoiceProfile[]; onChanged: () => Promise<void>; onDirty: (dirty: boolean) => void }) {
+async function api(path: string, value?: unknown): Promise<any> {
+  try {
+    const r = await fetch('/api' + path, { method: value === undefined ? 'GET' : 'POST', headers: { 'X-LoWriter': '1', 'Content-Type': 'application/json' }, body: value === undefined ? undefined : JSON.stringify(value), signal: value === undefined ? AbortSignal.timeout(15000) : undefined });
+    const v = await r.json(); if (!r.ok) throw new Error(v.error || 'Request failed.'); return v;
+  } catch (e) {
+    if (e instanceof Error && e.name === 'TimeoutError') throw new Error('The local service did not respond. Check that LoWriter is running, then retry.');
+    throw e;
+  }
+}
+type StorySetupProps = { id: string; voices: VoiceProfile[]; onChanged: () => Promise<void>; onDirty: (dirty: boolean) => void };
+export function StorySetupPanel(props: StorySetupProps) {
+  // Keep a bad setup response from breaking the surrounding modal and its X button.
+  const [error, retry] = useErrorBoundary();
+  if (error) return <div class="story-panel"><p class="error" role="alert">Story setup could not display this data. Your saved story has not been replaced. Close this panel and reopen LoWriter if it was recently updated.</p><button onClick={retry}>Retry loading story setup</button></div>;
+  return <StorySetupForm {...props}/>;
+}
+function StorySetupForm({ id, voices, onChanged, onDirty }: StorySetupProps) {
   const [s, setS] = useState<StorySetup>(blankStory), [revision, setRevision] = useState(-1), [dirty, setDirty] = useState(false), [busy, setBusy] = useState(false), [error, setError] = useState(''), [notice, setNotice] = useState('');
   const [presets, setPresets] = useState<any[]>([]), [versions, setVersions] = useState<any[]>([]), [preset, setPreset] = useState(''), [presetName, setPresetName] = useState(''), [preview, setPreview] = useState<any>(null), [includeImages, setIncludeImages] = useState(false);
   const path = `/conversations/${id}`;
-  async function read() { const v = await api(path + '/story'); setS(v.setup); setRevision(v.revision); setPresets(v.presets); setVersions(v.versions); setDirty(false); }
-  useEffect(() => { void read().catch(e => setError(e.message)); }, [id]);
+  async function read() {
+    const v = await api(path + '/story');
+    // Never default this field to []: an older service would silently discard new instructions on save.
+    if (v.setup && !Object.hasOwn(v.setup, 'additionalInstructions')) throw new Error('The local service is still running an older version of LoWriter. Finish any active generation, quit LoWriter, open Start LoWriter.cmd again, then refresh this page. Your saved stories are unchanged.');
+    if (!Array.isArray(v.setup?.additionalInstructions) || !Number.isSafeInteger(v.revision) || v.revision < 0 || !Array.isArray(v.presets) || !Array.isArray(v.versions)) throw new Error('The local service returned incomplete story setup data. No draft was replaced. Retry loading, or reopen LoWriter.');
+    setS(v.setup); setRevision(v.revision); setPresets(v.presets); setVersions(v.versions); setDirty(false);
+  }
+  useEffect(() => { void act(read); }, [id]);
   useEffect(() => { onDirty(dirty); return () => onDirty(false); }, [dirty]);
   useEffect(() => { const guard = (e: BeforeUnloadEvent) => { if (dirty) { e.preventDefault(); e.returnValue = ''; } }; window.addEventListener('beforeunload', guard); return () => window.removeEventListener('beforeunload', guard); }, [dirty]);
   function change(p: Partial<StorySetup>) { setS({ ...s, ...p }); setDirty(true); setPreview(null); }
@@ -38,6 +59,9 @@ export function StorySetupPanel({ id, voices, onChanged, onDirty }: { id: string
   function loreUpdate(id: string, patch: Partial<LoreEntry>) { change({ lore: s.lore.map(e => e.id === id ? { ...e, ...patch } : e) }); }
   function portraitUpdate(id: string, patch: Partial<StoryPortrait>) { change({ portraits: s.portraits.map(e => e.id === id ? { ...e, ...patch } : e) }); }
   function instructionUpdate(id: string, patch: Partial<AdditionalInstruction>) { change({ additionalInstructions: s.additionalInstructions.map(e => e.id === id ? { ...e, ...patch } : e) }); }
+  if (revision < 0) return <div class="story-panel">
+    {error ? <><p class="error" role="alert">{error}</p><button disabled={busy} onClick={() => void act(read)}>Retry loading story setup</button></> : <p role="status">Loading story setup…</p>}
+  </div>;
   return <div class="story-panel story-setup">
     <p>One card can hold an entire world and cast. Everything below is optional. No group turns, automatic character agents, or mandatory writing modes.</p>
     {error && <p class="error" role="alert">{error}</p>}{notice && <p class="banner" role="status">{notice}</p>}

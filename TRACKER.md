@@ -21,9 +21,11 @@ Updated 2026-09-17. Keep this checklist concise; detailed working notes stay loc
 - [ ] Broader authorized live-provider/image/voice and audible playback tests. Reported Tor generation success is not a full integration acceptance pass.
 - [ ] Dedicated browser checks for memory corrections and authored narrative; visual review of idle animation.
 - [ ] Broader security, performance and long-chat hardening.
+- [ ] Seamless update handover when an already-running process has older code; version-mismatched Story setup now fails safely with restart guidance instead of freezing.
 
 ## Completed baseline
 - [x] Chat loading; cards/personas/lore; optional portraits and idle motion; configurable additional instructions.
 - [x] Optional story-only memory with selectable AI; regenerate/swipes/continue/branches.
 - [x] Image variants, saved voices, Markdown editing and appearance presets.
+- [x] Story setup crash recovery: older-service detection, load retry/timeout and isolated panel errors keep X working. Synthetic browser recovery and normal story setup checks pass.
 - [x] Console-owned startup/shutdown fix published in e9d02aa. Full suite: 132 passed; final launcher checks: 14 passed; strict TypeScript and build passed. Device/live-provider checks above remain separate.
