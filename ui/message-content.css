@@ -1,0 +1,22 @@
+.message-display-controls{display:flex;justify-content:flex-end;margin:0 0 8px}
+.message-display-controls button{font-size:10px;padding:4px 8px;color:var(--muted)}
+.formatted-message{white-space:normal!important;overflow-wrap:anywhere}
+.formatted-message p{margin:0 0 var(--paragraph-spacing,1em);line-height:inherit}
+.formatted-message>:last-child{margin-bottom:0}
+.formatted-message h2,.formatted-message h3,.formatted-message h4,.formatted-message h5,.formatted-message h6{font-family:inherit;font-weight:600;letter-spacing:normal;line-height:1.35;margin:1em 0 .5em}
+.formatted-message h2{font-size:1.3em}.formatted-message h3{font-size:1.15em}
+.formatted-message ul,.formatted-message ol{padding-left:1.5em;margin:.5em 0 1em}
+.formatted-message li>p{margin:.2em 0}
+.formatted-message blockquote{margin:1em 0;padding:.25em 1em;border-left:3px solid var(--accent);color:var(--muted)}
+.formatted-message code{font-family:Consolas,monospace;white-space:pre-wrap;background:var(--outer);border-radius:4px;padding:.1em .25em;font-size:.9em}
+.formatted-message pre{white-space:pre;overflow:auto;max-width:100%;padding:14px;background:var(--outer);border:1px solid var(--border);border-radius:8px}
+.formatted-message pre code{white-space:pre;padding:0}
+.formatted-message a{color:var(--accent);text-decoration:underline}
+.message-table{max-width:100%;overflow:auto;margin:1em 0}.message-table table{border-collapse:collapse;font-size:.9em}.message-table th,.message-table td{border:1px solid var(--border);padding:.4em .7em;text-align:left}
+.message-image-note{color:var(--muted);font-style:italic}
+.raw-message{white-space:pre-wrap}
+.message-content .message-text,.appearance-sample{font-family:var(--message-font,Georgia,serif);line-height:var(--message-leading,1.9);letter-spacing:var(--letter-spacing,0px)}
+.formatted-message code,.formatted-message pre{letter-spacing:normal;line-height:1.6}
+.message-display-controls{gap:6px;align-items:center;flex-wrap:wrap}.message-display-controls small{font-size:10px;color:var(--muted)}
+.message-editor fieldset{border:0;padding:0;margin:0;min-width:0}.format-toolbar{display:flex;gap:5px;flex-wrap:wrap;margin:8px 0}.format-toolbar button{font-size:11px;padding:5px 8px}
+.message-editor textarea{display:block;width:100%;font-family:Consolas,monospace;font-size:14px;line-height:1.6;color:var(--text);background:var(--card);border:1px solid var(--border);border-radius:8px;padding:12px;resize:vertical}

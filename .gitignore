@@ -1,0 +1,27 @@
+node_modules/
+dist/
+.lowriter/
+.demo-data/
+.demo-project/
+.test-data/
+*.log
+*.db*
+*.sqlite*
+.env*
+coverage/
+artifacts/
+# Local credentials, device state and private exports must never be published.
+client.json
+vault*.json
+/device-key*
+*.key
+*.pfx
+*.p12
+backups/
+exports/
+# Local notes and documentation are not published.
+/*.md
+/*.txt
+!/README.md
+/docs/
+/.local/

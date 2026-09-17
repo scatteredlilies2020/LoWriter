@@ -1,0 +1,12 @@
+import { DatabaseSync } from 'node:sqlite';
+import { scryptSync, createCipheriv, randomBytes } from 'node:crypto';
+import { createServer } from 'node:http';
+import assert from 'node:assert/strict';
+if (Number(process.versions.node.split('.')[0]) < 24) throw new Error('Node 24+ is required.');
+const db = new DatabaseSync(':memory:'); db.exec('CREATE TABLE smoke(value TEXT)'); db.prepare('INSERT INTO smoke VALUES(?)').run('works'); assert.equal(db.prepare('SELECT value FROM smoke').get().value, 'works'); db.close();
+const key = scryptSync('synthetic runtime smoke only', randomBytes(16), 32), cipher = createCipheriv('aes-256-gcm', key, randomBytes(12)); cipher.update('smoke'); cipher.final(); key.fill(0);
+const server = createServer((req, res) => res.end('loopback-ok'));
+await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+const port = server.address().port; assert.equal(await (await fetch(`http://127.0.0.1:${port}`)).text(), 'loopback-ok');
+await new Promise(resolve => { server.closeAllConnections(); server.close(resolve); });
+console.log(JSON.stringify({ runtime: process.version, platform: process.platform, arch: process.arch, sqlite: 'passed', crypto: 'passed', loopback: 'passed', termuxRealDevice: process.platform === 'android' ? 'runtime only; GUI/device lifecycle tests still required' : 'not tested' }, null, 2));
