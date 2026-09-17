@@ -7,7 +7,7 @@ import { promisify } from 'node:util';
 import { dataDir } from './paths.ts';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
-interface Client { origin: string; token: string; pid: number }
+export interface Client { origin: string; token: string; pid: number }
 export interface LaunchOptions { dataDir: string; demo?: boolean; port?: number; open?: (url: string) => Promise<void> }
 
 async function clientFile(dir: string): Promise<Client | undefined> {
@@ -38,6 +38,31 @@ async function running(dir: string): Promise<Client | undefined> {
   throw new Error('The existing local service could not be authenticated. Close its LoWriter terminal, then reopen LoWriter.');
 }
 
+// Bind a console to this exact authenticated instance, never to a replacement
+// which happens to reuse its port or private directory.
+export async function coordinatorState(dir: string, client: Client): Promise<'running' | 'stopped' | 'crashed'> {
+  const current = await clientFile(dir);
+  if (!current || current.pid !== client.pid || current.token !== client.token || current.origin !== client.origin) return 'stopped';
+  try { process.kill(client.pid, 0); return 'running'; } catch { return 'crashed'; }
+}
+
+export async function coordinatorPresent(dir: string, client: Client): Promise<boolean> {
+  return await coordinatorState(dir, client) === 'running';
+}
+
+export async function stopCoordinator(dir: string, client: Client): Promise<void> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (!await coordinatorPresent(dir, client)) return;
+    try {
+      const response = await localRequest(client, '/shutdown', true);
+      await response.body?.cancel();
+      if (response.ok || response.status === 503) return;
+    } catch { /* Retry a temporary local transport failure, not another process. */ }
+    await new Promise(yes => setTimeout(yes, 300));
+  }
+  throw new Error('LoWriter could not shut down cleanly. Use Quit LoWriter again.');
+}
+
 export async function ensureCoordinator(options: LaunchOptions): Promise<Client> {
   const dir = resolve(options.dataDir), existing = await running(dir);
   if (existing) return existing;
@@ -49,9 +74,10 @@ export async function ensureCoordinator(options: LaunchOptions): Promise<Client>
     windowsHide: true, detached: true, stdio: 'ignore',
   });
   let failedToStart = false;
-  child.once('error', () => { failedToStart = true; }); child.unref();
+  child.once('error', () => { failedToStart = true; });
+  child.once('exit', () => { failedToStart = true; }); child.unref();
   for (let attempt = 0; attempt < 100; attempt++) {
-    if (failedToStart) throw new Error('Could not start the LoWriter runtime.');
+    if (failedToStart) throw new Error('LoWriter stopped during startup. Its port may be occupied. Run LoWriter.ps1 service for a visible diagnostic.');
     await new Promise(resolveWait => setTimeout(resolveWait, 200));
     const ready = await running(dir); if (ready) return ready;
   }
@@ -72,12 +98,16 @@ export async function openBrowser(url: string): Promise<void> {
 }
 export async function launch(options: LaunchOptions): Promise<{ origin: string; pid: number }> {
   const client = await ensureCoordinator(options);
+  return openCoordinator(client, options.open);
+}
+
+export async function openCoordinator(client: Client, open: (url: string) => Promise<void> = openBrowser): Promise<{ origin: string; pid: number }> {
   const response = await localRequest(client, '/launch', true);
   if (response.status === 404) throw new Error('An older LoWriter service is running. Close its old terminal once, then open LoWriter again.');
   if (!response.ok) throw new Error('Could not prepare the local workspace. Open LoWriter again.');
   const value = await response.json() as { url?: string };
   if (value.url !== client.origin + '/launch') throw new Error('Invalid local launch response.');
-  await (options.open ?? openBrowser)(value.url);
+  await open(value.url);
   return { origin: client.origin, pid: client.pid };
 }
 
@@ -91,7 +121,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
       catch (e: any) { if (e.code !== 'EEXIST') throw new Error('Could not prepare the disposable demo project.'); }
       console.log(`Local demo project: ${project}`);
     }
-    if (process.argv.includes('--no-browser')) { const client = await ensureCoordinator(options); console.log(`LoWriter ready at ${client.origin}; browser not opened.`); }
-    else { await launch(options); console.log('LoWriter opened. No pairing code is needed.'); }
+    const { consoleSession } = await import('./console-session.ts');
+    await consoleSession(options, process.argv.includes('--no-browser'));
   } catch (e) { console.error(e instanceof Error ? e.message : 'LoWriter could not open.'); process.exitCode = 1; }
 }
